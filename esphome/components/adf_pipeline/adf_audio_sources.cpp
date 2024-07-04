@@ -25,7 +25,7 @@ bool HTTPStreamReaderAndDecoder::init_adf_elements_() {
 
   http_stream_cfg_t http_cfg = HTTP_STREAM_CFG_DEFAULT();
   //http_cfg.task_core = 0;
-  http_cfg.out_rb_size = 500 * 1024;
+  http_cfg.out_rb_size = 50 * 1024;
   http_stream_reader_ = http_stream_init(&http_cfg);
   //http_stream_reader_->buf_size =  1024;
   audio_element_set_uri(this->http_stream_reader_, this->current_url_.c_str());
@@ -46,7 +46,7 @@ bool HTTPStreamReaderAndDecoder::init_adf_elements_() {
         DEFAULT_ESP_TS_DECODER_CONFIG(),
   };
   esp_decoder_cfg_t auto_dec_cfg = DEFAULT_ESP_DECODER_CONFIG();
-  auto_dec_cfg.out_rb_size = 500 * 1024;
+  auto_dec_cfg.out_rb_size = 50 * 1024;
   decoder_ = esp_decoder_init(&auto_dec_cfg, auto_decode, 10);
   
   sdk_audio_elements_.push_back(this->decoder_);

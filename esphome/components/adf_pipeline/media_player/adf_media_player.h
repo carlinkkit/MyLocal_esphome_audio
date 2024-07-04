@@ -72,18 +72,20 @@ class ADFMediaPlayer : public media_player::MediaPlayer, public ADFPipelineContr
   void resume_();
   void player_resume_();
   bool is_announcement_();
-  void uninitialize_();
+  void player_uninitialize_();
+  void listen_();
+  void unlisten_();
 
   void mrm_process_recv_actions_();
   void mrm_process_send_actions_();
   void mrm_sync_position_(int64_t timestamp, int64_t position);
   void mrm_send_position_();
+  void mrm_command_(const std::string command);
   void mrm_set_stream_uri_(const std::string url);
   void mrm_start_();
   void mrm_stop_();
   void mrm_resume_();
   void mrm_uninitialize_();
-  bool mrm_listen_requested_{false};
   void mrm_listen_();
   void mrm_unlisten_();
   void mrm_turn_on_();
@@ -141,8 +143,6 @@ class ADFMediaPlayer : public media_player::MediaPlayer, public ADFPipelineContr
   void set_playlist_track_(ADFPlaylistTrack track);
   UdpMRM udpMRM_;
   int64_t position_timestamp_{0};
-
-  esp_err_t i2s_stream_sync_delay_(audio_element_handle_t i2s_stream, int32_t delay_size);
 };
 
 }  // namespace esp_adf

@@ -18,6 +18,7 @@
 #include "lwip/sys.h"
 #include <lwip/netdb.h>
 #include <cJSON.h>
+#include <algorithm>
 
 #include "esphome/components/network/ip_address.h"
 #include "esphome/components/network/util.h"
@@ -35,13 +36,12 @@ static const char *const TAG = "udp_mcast";
 static void mrm_task(void *pvParameters)
 {
   UdpMRM& self = *((UdpMRM*)pvParameters);
+  char recvbuf[self.multicast_buffer_size] = { 0 };
+  char addr_name[32] = { 0 };
 
   // outer loop, used to rebuild socket on failures.
   int socket_loop_count = 0;
   while (true) {
-
-    char recvbuf[self.multicast_buffer_size];
-    char addr_name[32] = { 0 };
 
     // create socket
     int sock = self.create_multicast_ipv4_socket();
@@ -62,21 +62,12 @@ static void mrm_task(void *pvParameters)
       }
     }
 
-    // set destination multicast addresses for sending from these sockets
-    /* testing without this, remove if not needed
-    struct sockaddr_in sdestv4 = {
-      .sin_family = PF_INET,
-      .sin_port = htons(self.udp_port),
-    };
-    // We know this inet_aton will pass because we did it above already
-    inet_aton(self.multicast_ipv4_addr.c_str(), &sdestv4.sin_addr.s_addr);
-    */
-
     // Loop first look for UDP datagrams and convert to recv_actions 
     // and then send UDP datagrams if send_actions available.
     // all failures are handled as breaks from this loop, so while 
-    // never processes an retval 0 or less.
+    // never processes a retval 0 or less.
     int retval = 1;
+    std::string message_prior = "";
     while (retval > 0) {
 
       // break if stop requested
@@ -122,21 +113,17 @@ static void mrm_task(void *pvParameters)
           recvbuf[len] = 0; // Null-terminate whatever we received and treat like a string...
           std::string message = recvbuf;
           std::string address = addr_name;
-          self.process_multicast_message(message, address);
+          if (message != message_prior) {
+            self.process_multicast_message(message, address);
+            message_prior = message;
+          }
         }
       }
       else {
-        // only creates send_ping action if time limit has expired
-        self.send_ping();
-
         // send actions to multicast
         if (self.send_actions.size() > 0) {
           std::string message = self.send_actions.front().to_string();
-
-          if (message == "{\"action\":\"ping\"}") {
-              esph_log_d(TAG, "Set ping_timestamp");
-              self.ping_timestamp = self.get_timestamp();
-          }
+          self.send_actions.pop();
 
           int len = message.length();
           if (len > self.multicast_buffer_size) {
@@ -170,7 +157,6 @@ static void mrm_task(void *pvParameters)
             esph_log_e(TAG, "IPV4 sendto failed. errno: %d", errno);
             break;
           }
-          self.send_actions.pop();
         }
       }
     }
@@ -195,25 +181,24 @@ static void mrm_task(void *pvParameters)
 std::string UdpMRMAction::to_string() {
 
   std::string message = "{\"action\":\"" + this->type + "\"";
+    std::ostringstream otimestamp;
+    otimestamp << this->get_timestamp();
+    // send time as a string so that cJSON can parse
+    message += ",\"timestamp\":\"" + otimestamp.str()+"\"";
 
   if (this->type == "ping_response") {
     std::ostringstream otimestampr;
     otimestampr << this->timestamp;
-    std::ostringstream otimestamps;
-    otimestamps << this->get_timestamp();
     // send time as a string so that cJSON can parse
     message += ",\"received_time\":\"" + otimestampr.str()+"\"";
-    message += ",\"send_time\":\"" + otimestamps.str()+"\"";
+    message += ",\"ping_time\":\"" + data1 +"\"";
     message += ",\"sender\":\"" + data +"\"";
   }
-  else if (this->type == "url") {
-    message += ",\"url\":\"" + this->data + "\"";
-  }
   else if (this->type == "sync_position") {
-    std::ostringstream otimestamp;
-    otimestamp << this->timestamp;
+    std::ostringstream otimestampt;
+    otimestampt << this->timestamp;
     // send time as a string so that cJSON can parse
-    message += ",\"time\":\"" + otimestamp.str()+"\"";
+    message += ",\"position_timestamp\":\"" + otimestampt.str()+"\"";
     message += ",\"position\":\"" + this->data + "\"";
   }
   message += "}";
@@ -223,12 +208,14 @@ std::string UdpMRMAction::to_string() {
 
 void UdpMRM::listen(media_player::MediaPlayerMRM mrm) {
   mrm_ = mrm;
-  ping_timestamp = get_timestamp() - 590000000L;
+  ping_send_timestamp = get_timestamp() - 590000000L;
   stop_multicast = false;
+  ping_startup_cnt = 0;
+  ping_startup_timestamp = 0;
   if (!multicast_running) {
     esph_log_d(TAG, "Start multicast");
     esph_log_d(TAG, "Create Task 'mrm_task'");
-    xTaskCreate(&mrm_task, "mrm_task", 4096, this, 5, &xhandle);
+    xTaskCreatePinnedToCore(&mrm_task, "mrm_task", 4096, this, 5, &xhandle, 1);
     multicast_running = true;
   }
   else {
@@ -237,50 +224,19 @@ void UdpMRM::listen(media_player::MediaPlayerMRM mrm) {
 }
 
 void UdpMRM::unlisten() {
-  esph_log_d(TAG, "Stop multicast");
-  stop_multicast = true;
+  if (!multicast_running) {
+    esph_log_d(TAG, "Stop multicast");
+    stop_multicast = true;
+  }
 }
 
-void UdpMRM::set_stream_uri(const std::string& url) {
-  esph_log_d(TAG, "set followers' uri");
-  UdpMRMAction action;
-  action.type = "url";
-  action.data = url;
-  send_actions.push(action);
-}
-
-void UdpMRM::start() {
-  esph_log_d(TAG, "Start followers' media players");
-  UdpMRMAction action;
-  action.type = "start";
-  send_actions.push(action);
-}
-
-void UdpMRM::stop() {
-  esph_log_d(TAG, "Stop followers' media players");
-  UdpMRMAction action;
-  action.type = "stop";
-  send_actions.push(action);
-}
-
-void UdpMRM::resume() {
-  esph_log_d(TAG, "Resume followers' media players");
-  UdpMRMAction action;
-  action.type = "resume";
-  send_actions.push(action);
-}
-
-void UdpMRM::uninitialize() {
-  esph_log_d(TAG, "Uninitialize followers' media players");
-  UdpMRMAction action;
-  action.type = "Uninitialize";
-  send_actions.push(action);
-}
-
-//called on every inner loop
 void UdpMRM::send_ping() {
-    if (get_mrm() == media_player::MEDIA_PLAYER_MRM_FOLLOWER && (get_timestamp() - ping_timestamp) > 600000000L) {
-    esph_log_d(TAG, "ping the leader");
+  if (get_mrm() == media_player::MEDIA_PLAYER_MRM_FOLLOWER && ((ping_startup_cnt < 11 && (get_timestamp() - ping_startup_timestamp) > 3000000L) || (get_timestamp() - ping_send_timestamp) > 600000000L) ) {
+    if (ping_startup_cnt < 11 && (get_timestamp() - ping_startup_timestamp) > 3000000L) {
+      ping_startup_timestamp = get_timestamp();
+      ping_startup_cnt++;
+    }
+    ping_send_timestamp = get_timestamp();
     UdpMRMAction action;
     action.type = "ping";
     send_actions.push(action);
@@ -299,7 +255,7 @@ void UdpMRM::send_position(int64_t timestamp, int64_t position) {
 }
 
 void UdpMRM::process_multicast_message(std::string &message, std::string &sender) {
-  if (message.length()) {
+  if (message.length() > 0) {
     esph_log_d(TAG, "Received: %s from %s", message.c_str(), sender.c_str());
     
     cJSON *root = cJSON_Parse(message.c_str());
@@ -312,41 +268,54 @@ void UdpMRM::process_multicast_message(std::string &message, std::string &sender
         action.type = "ping_response";
         action.data = sender;
         action.timestamp = get_timestamp();
+        std::string ping_timestamp_str = cJSON_GetObjectItem(root,"timestamp")->valuestring;
+        action.data1 = ping_timestamp_str;
         send_actions.push(action);
       }
     }
     // Only Followers respond to below actions
     else if (recv_action == "ping_response") {
       if (get_mrm() == media_player::MEDIA_PLAYER_MRM_FOLLOWER) {
-          int64_t follower_timestamp = get_timestamp();
-          esph_log_d(TAG,"process ping_response 1");
+        int64_t follower_timestamp = get_timestamp();
         std::string originator = cJSON_GetObjectItem(root,"sender")->valuestring;
         if (originator == this_addr_) {
           std::string leader_timestampr_str = cJSON_GetObjectItem(root,"received_time")->valuestring;
-          std::string leader_timestamps_str = cJSON_GetObjectItem(root,"send_time")->valuestring;
+          std::string leader_timestamps_str = cJSON_GetObjectItem(root,"timestamp")->valuestring;
+          std::string ping_timestamp_str = cJSON_GetObjectItem(root,"ping_time")->valuestring;
           int64_t leader_timestampr = strtoll(leader_timestampr_str.c_str(), NULL, 10);
           int64_t leader_timestamps = strtoll(leader_timestamps_str.c_str(), NULL, 10);
+          int64_t ping_timestamp    = strtoll(ping_timestamp_str.c_str(), NULL, 10);
           int64_t duration = ((follower_timestamp - ping_timestamp) - (leader_timestamps - leader_timestampr));
           //positive means that leader is ahead of follower for the same time.
           //leader time = follower time + offset
-          offset = round((leader_timestamps + (.5 * duration)) - follower_timestamp);
-          esph_log_d(TAG,"%lld, %lld, Offset calculated from ping (microseconds): %lld", follower_timestamp, duration, offset);
+
+          //offset is a rolling average of last 10.
+          int64_t calc_offset = round((leader_timestamps + (.5 * duration)) - follower_timestamp);
+          
+          esph_log_d(TAG,"%lld, %lld, Offset calculated from ping (microseconds): %lld", follower_timestamp, duration, calc_offset);
+
+          if (offsets.size() > 9) {
+            offsets.pop();
+          }
+          offsets.push(calc_offset);
+
+          int64_t sum_offset = 0;
+          std::queue<int64_t>tmpq(offsets);
+          while (!tmpq.empty()) {
+            sum_offset = std::move(sum_offset) + tmpq.front();
+            tmpq.pop();
+          }
+          offset = round((1.0 * sum_offset) / (1.0 * offsets.size()));
+
+          esph_log_d(TAG,"average offset (microseconds): %lld", offset);
         }
-      }
-    }
-    else if (recv_action == "url") {
-      if (get_mrm() == media_player::MEDIA_PLAYER_MRM_FOLLOWER) {
-        std::string url = cJSON_GetObjectItem(root,"url")->valuestring;
-        UdpMRMAction action;
-        action.type = recv_action;
-        action.data = url;
-        recv_actions.push(action);
       }
     }
     else if (recv_action == "sync_position") {
       if (get_mrm() == media_player::MEDIA_PLAYER_MRM_FOLLOWER) {
+        esph_log_d(TAG, "Processing received sync_position");
         // process this action to speed up or slow down followers output to sync with leader
-        std::string timestamp_str = cJSON_GetObjectItem(root,"time")->valuestring;
+        std::string timestamp_str = cJSON_GetObjectItem(root,"position_timestamp")->valuestring;
         int64_t timestamp = strtoll(timestamp_str.c_str(), NULL, 10);
         std::string position_str = cJSON_GetObjectItem(root,"position")->valuestring;
         int64_t position = strtoll(position_str.c_str(), NULL, 10);
@@ -356,11 +325,6 @@ void UdpMRM::process_multicast_message(std::string &message, std::string &sender
         action.timestamp = (timestamp + offset);
         recv_actions.push(action);
       }
-    }
-    else {
-      UdpMRMAction action;
-      action.type = recv_action;
-      recv_actions.push(action);
     }
   }
 }
@@ -465,7 +429,8 @@ int UdpMRM::create_multicast_ipv4_socket(void)
     return retval;
   }
 
-  uint8_t loopback_val = 1;
+  // no loopback
+  uint8_t loopback_val = 0;
   retval = setsockopt(sock, IPPROTO_IP, IP_MULTICAST_LOOP, &loopback_val, sizeof(uint8_t));
   if (retval < 0) {
     esph_log_e(TAG, "Failed to set IP_MULTICAST_LOOP. Error %d", errno);

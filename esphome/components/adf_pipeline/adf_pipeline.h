@@ -39,6 +39,7 @@ State Explanations:
 */
 enum PipelineState : uint8_t { UNINITIALIZED = 0, PREPARING, STARTING, RUNNING, STOPPING, STOPPED, PAUSING, PAUSED, RESUMING, DESTROYING };
 
+const char *pipeline_state_to_string(PipelineState state);
 
 class ADFPipelineController;
 

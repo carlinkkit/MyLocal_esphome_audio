@@ -15,6 +15,7 @@ class UdpMRMAction {
   public:
     std::string type{""};
     std::string data{""};
+    std::string data1{""};
     int64_t timestamp{};
     std::string to_string();
     int64_t get_timestamp();
@@ -35,17 +36,13 @@ class UdpMRM {
     size_t multicast_buffer_size{512};
     bool multicast_running{false};
     TaskHandle_t xhandle{};
+    std::queue<int64_t> offsets;
     int64_t offset{};
     std::queue<UdpMRMAction> send_actions;
     std::queue<UdpMRMAction> recv_actions;
 
     void listen(media_player::MediaPlayerMRM mrm);
     void unlisten();
-    void set_stream_uri(const std::string& url);
-    void start();
-    void stop();
-    void resume();
-    void uninitialize();
     void send_ping();
     void send_position(int64_t timestamp, int64_t position);
 
@@ -57,7 +54,9 @@ class UdpMRM {
     int socket_add_ipv4_multicast_group(int sock, bool assign_source_if);
     int create_multicast_ipv4_socket(void);
     void process_multicast_message(std::string &message, std::string &sender);
-    int64_t ping_timestamp{};
+    int64_t ping_startup_timestamp{0};
+    int64_t ping_send_timestamp{0};
+    uint ping_startup_cnt{0};
 
   protected:
     media_player::MediaPlayerMRM mrm_{media_player::MEDIA_PLAYER_MRM_OFF};
