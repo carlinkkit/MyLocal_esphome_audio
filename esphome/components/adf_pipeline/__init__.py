@@ -2,10 +2,12 @@
 
 import os
 
-from ._common import (
+from ._common import ( # noqa: F401
     esp_adf_ns,
     ADFPipelineProcess,
     ADFPipelineElement,
+    register_element,
+    get_registered_element,
     validate_element,
 )
 
@@ -55,28 +57,17 @@ async def setup_pipeline_controller(cntrl, config: dict) -> None:
         for comp_id in config[CONF_ADF_PIPELINE]:
             if comp_id in SELF_DESCRIPTORS:
                 cg.add(cntrl.append_own_elements())
-            elif comp_id in BUILT_IN_AUDIO_ELEMENT_IDS:
+            elif (type_ := get_registered_element(comp_id)):
                 element_id = ID(
-                    cv.validate_id_name(config[CONF_ID].id + "_resampler"),
+                    cv.validate_id_name(config[CONF_ID].id + "_"+comp_id),
                     is_declaration=True,
-                    type=ADFResampler,
+                    type=type_,
                 )
                 comp = cg.new_Pvariable(element_id)
                 cg.add(cntrl.add_element_to_pipeline(comp))
             else:
                 comp = await cg.get_variable(comp_id)
                 cg.add(cntrl.add_element_to_pipeline(comp))
-
-
-# Pipeline Elements
-
-ADF_PIPELINE_ELEMENT_SCHEMA = cv.Schema({})
-
-element_classes = {
-    "resampler": esp_adf_ns.class_(
-        "ADFResampler", ADFPipelineProcess, ADFPipelineElement
-    )
-}
 
 
 @coroutine_with_priority(55.0)
@@ -103,8 +94,8 @@ async def to_code(config):
         "https://github.com/espressif/esp-adf/raw/v2.5/idf_patches/idf_v4.4_freertos.patch",
     )
 
-    add_idf_component(
-        name="mdns",
+    esp32.add_idf_component(
+        name="esp-adf",
         repo="https://github.com/espressif/esp-adf.git",
         ref="v2.5",
         path="components",
