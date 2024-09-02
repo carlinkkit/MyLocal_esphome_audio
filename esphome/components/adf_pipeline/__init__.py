@@ -4,8 +4,11 @@ import os
 
 from ._common import ( # noqa: F401
     esp_adf_ns,
-    ADFPipelineProcess,
     ADFPipelineElement,
+    ADFPipelineProcess,
+    ADFPipelineSink,
+    ADFPipelineSource,
+    ADFPipelineController,
     register_element,
     get_registered_element,
     validate_element,
@@ -55,18 +58,14 @@ async def setup_pipeline_controller(cntrl, config: dict) -> None:
 
     if CONF_ADF_PIPELINE in config:
         for comp_id in config[CONF_ADF_PIPELINE]:
-            if comp_id in SELF_DESCRIPTORS:
-                cg.add(cntrl.append_own_elements())
-            elif (type_ := get_registered_element(comp_id)):
-                element_id = ID(
-                    cv.validate_id_name(config[CONF_ID].id + "_"+comp_id),
-                    is_declaration=True,
-                    type=type_,
-                )
-                comp = cg.new_Pvariable(element_id)
-                cg.add(cntrl.add_element_to_pipeline(comp))
+            if isinstance(comp_id, str):
+                if comp_id in SELF_DESCRIPTORS:
+                    cg.add(cntrl.append_own_elements())
+            elif isinstance(comp_id, ID):
+                    comp = await cg.get_variable(comp_id)
+                    cg.add(cntrl.add_element_to_pipeline(comp))
             else:
-                comp = await cg.get_variable(comp_id)
+                comp = await get_registered_element(comp_id)
                 cg.add(cntrl.add_element_to_pipeline(comp))
 
 

@@ -15,9 +15,14 @@ class ADFPipelineProcessElement : public ADFPipelineElement {
 class ADFResampler : public ADFPipelineProcessElement {
  public:
   const std::string get_name() override { return "Resampler"; }
+  void set_src_rate(int value) { this->src_rate_ = value; };
+  void set_dst_rate(int value) { this->dst_rate_ = value; };
+  void set_src_num_channels(int value) { this->src_num_channels_ = value; };
+  void set_dst_num_channels(int value) { this->dst_num_channels_ = value; };
 
  protected:
   bool init_adf_elements_() override;
+
   void on_settings_request(AudioPipelineSettingsRequest &request) override;
 
   int src_rate_{16000};
