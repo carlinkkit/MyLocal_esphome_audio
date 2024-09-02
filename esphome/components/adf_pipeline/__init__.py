@@ -2,8 +2,20 @@
 
 import os
 
+from ._common import (  # noqa: F401
+    esp_adf_ns,
+    ADFPipelineElement,
+    ADFPipelineProcess,
+    ADFPipelineSink,
+    ADFPipelineSource,
+    ADFPipelineController,
+    register_element,
+    get_registered_element,
+    validate_element,
+)
+
 import esphome.codegen as cg
-from esphome.components.esp32 import add_idf_component
+
 from esphome.components import esp32
 import esphome.config_validation as cv
 from esphome.const import CONF_ID
@@ -19,16 +31,6 @@ CONF_ADF_COMPONENT_TYPE = "type"
 CONF_ADF_PIPELINE = "pipeline"
 CONF_ADF_KEEP_PIPELINE_ALIVE = "keep_pipeline_alive"
 
-esp_adf_ns = cg.esphome_ns.namespace("esp_adf")
-ADFPipelineController = esp_adf_ns.class_("ADFPipelineController")
-
-ADFPipelineElement = esp_adf_ns.class_("ADFPipelineElement")
-ADFPipelineSink = esp_adf_ns.class_("ADFPipelineSinkElement", ADFPipelineElement)
-ADFPipelineSource = esp_adf_ns.class_("ADFPipelineSourceElement", ADFPipelineElement)
-ADFPipelineProcess = esp_adf_ns.class_("ADFPipelineProcessElement", ADFPipelineElement)
-
-BUILT_IN_AUDIO_ELEMENT_IDS = ["resampler"]
-
 # Pipeline Controller
 
 COMPONENT_TYPES = ["sink", "source", "filter"]
@@ -41,14 +43,12 @@ ADF_PIPELINE_CONTROLLER_SCHEMA = cv.Schema(
         cv.Optional(CONF_ADF_PIPELINE): cv.ensure_list(
             cv.Any(
                 cv.one_of(*SELF_DESCRIPTORS),
-                cv.one_of(*BUILT_IN_AUDIO_ELEMENT_IDS),
+                validate_element,
                 cv.use_id(ADFPipelineElement),
             )
         ),
     }
 )
-
-ADFResampler = esp_adf_ns.class_("ADFResampler", ADFPipelineProcess, ADFPipelineElement)
 
 
 async def setup_pipeline_controller(cntrl, config: dict) -> None:
@@ -60,34 +60,23 @@ async def setup_pipeline_controller(cntrl, config: dict) -> None:
         for comp_id in config[CONF_ADF_PIPELINE]:
             if comp_id in SELF_DESCRIPTORS:
                 cg.add(cntrl.append_own_elements())
-            elif comp_id in BUILT_IN_AUDIO_ELEMENT_IDS:
+            elif type_ := get_registered_element(comp_id):
                 element_id = ID(
-                    cv.validate_id_name(config[CONF_ID].id + "_resampler"),
+                    cv.validate_id_name(config[CONF_ID].id + "_" + comp_id),
                     is_declaration=True,
-                    type=ADFResampler,
+                    type=type_,
                 )
                 comp = cg.new_Pvariable(element_id)
                 cg.add(cntrl.add_element_to_pipeline(comp))
             else:
-                comp = await cg.get_variable(comp_id)
+                comp = await get_registered_element(comp_id)
                 cg.add(cntrl.add_element_to_pipeline(comp))
-
-
-# Pipeline Elements
-
-ADF_PIPELINE_ELEMENT_SCHEMA = cv.Schema({})
-
-element_classes = {
-    "resampler": esp_adf_ns.class_(
-        "ADFResampler", ADFPipelineProcess, ADFPipelineElement
-    )
-}
 
 
 @coroutine_with_priority(55.0)
 async def to_code(config):
     cg.add_define("USE_ESP_ADF_VAD")
-    
+
     cg.add_platformio_option("build_unflags", "-Wl,--end-group")
 
     cg.add_platformio_option(
@@ -108,8 +97,8 @@ async def to_code(config):
         "https://github.com/espressif/esp-adf/raw/v2.5/idf_patches/idf_v4.4_freertos.patch",
     )
 
-    add_idf_component(
-        name="mdns",
+    esp32.add_idf_component(
+        name="esp-adf",
         repo="https://github.com/espressif/esp-adf.git",
         ref="v2.5",
         path="components",
