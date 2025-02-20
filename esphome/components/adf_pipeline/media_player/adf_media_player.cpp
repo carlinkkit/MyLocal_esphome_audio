@@ -86,12 +86,6 @@ void ADFMediaPlayer::control(const media_player::MediaPlayerCall &call) {
         return;
 #endif
 
-      case media_player::MEDIA_PLAYER_COMMAND_ENQUEUE:
-      case media_player::MEDIA_PLAYER_COMMAND_REPEAT_ONE:
-      case media_player::MEDIA_PLAYER_COMMAND_REPEAT_OFF:
-      case media_player::MEDIA_PLAYER_COMMAND_CLEAR_PLAYLIST:
-        break;
-
       default:
         break;
     }
@@ -152,6 +146,8 @@ void ADFMediaPlayer::control(const media_player::MediaPlayerCall &call) {
         set_volume_(new_volume);
         break;
       }
+      default:
+        break;
     }
   }
 }
