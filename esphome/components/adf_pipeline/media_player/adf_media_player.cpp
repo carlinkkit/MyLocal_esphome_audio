@@ -25,9 +25,8 @@ void ADFMediaPlayer::set_stream_uri(const std::string& new_uri) {
 
 void ADFMediaPlayer::control(const media_player::MediaPlayerCall &call) {
   if (call.get_media_url().has_value()) {
-    set_stream_uri( call.get_media_url().value()) ;
-
-    esph_log_d(TAG, "Got control call in state %d", state );
+    set_stream_uri(call.get_media_url().value());
+    esph_log_d(TAG, "Got control call in state %d", state);
     if (state == media_player::MEDIA_PLAYER_STATE_PLAYING || state == media_player::MEDIA_PLAYER_STATE_PAUSED) {
       this->play_intent_ = true;
       pipeline.stop();
@@ -49,8 +48,7 @@ void ADFMediaPlayer::control(const media_player::MediaPlayerCall &call) {
           pipeline.start();
         } else if (pipeline.getState() == PipelineState::PAUSED) {
           pipeline.resume();
-        }
-        else if (state == media_player::MEDIA_PLAYER_STATE_PLAYING || state == media_player::MEDIA_PLAYER_STATE_PAUSED){
+        } else if (state == media_player::MEDIA_PLAYER_STATE_PLAYING || state == media_player::MEDIA_PLAYER_STATE_PAUSED) {
           this->play_intent_ = true;
           pipeline.stop();
         }
@@ -76,32 +74,35 @@ void ADFMediaPlayer::control(const media_player::MediaPlayerCall &call) {
           state = media_player::MEDIA_PLAYER_STATE_PAUSED;
         }
         break;
-      case media_player::MEDIA_PLAYER_COMMAND_VOLUME_UP: {
-        float new_volume = this->volume + 0.1f;
-        if (new_volume > 1.0f)
-          new_volume = 1.0f;
-        set_volume_(new_volume);
+      case media_player::MEDIA_PLAYER_COMMAND_VOLUME_UP:
+        set_volume_(std::min(this->volume + 0.1f, 1.0f));
         unmute_();
         break;
-      }
-      case media_player::MEDIA_PLAYER_COMMAND_VOLUME_DOWN: {
-        float new_volume = this->volume - 0.1f;
-        if (new_volume < 0.0f)
-          new_volume = 0.0f;
-        set_volume_(new_volume);
+      case media_player::MEDIA_PLAYER_COMMAND_VOLUME_DOWN:
+        set_volume_(std::max(this->volume - 0.1f, 0.0f));
         unmute_();
         break;
-      }
+      case media_player::MEDIA_PLAYER_COMMAND_REPEAT_ONE:
+        esph_log_w(TAG, "Repeat one command received, not implemented.");
+        break;
+      case media_player::MEDIA_PLAYER_COMMAND_REPEAT_OFF:
+        esph_log_w(TAG, "Repeat off command received, not implemented.");
+        break;
+      case media_player::MEDIA_PLAYER_COMMAND_CLEAR_PLAYLIST:
+        esph_log_w(TAG, "Clear playlist command received, not implemented.");
+        break;
+      default:
+        esph_log_w(TAG, "Unknown command received.");
+        break;
     }
   }
 }
 
-// pausing is only supported if destroy_pipeline_on_stop is disabled
 media_player::MediaPlayerTraits ADFMediaPlayer::get_traits() {
   auto traits = media_player::MediaPlayerTraits();
-  traits.set_supports_pause( false );
+  traits.set_supports_pause(false);
   return traits;
-};
+}
 
 void ADFMediaPlayer::mute_() {
   AudioPipelineSettingsRequest request;
@@ -132,14 +133,13 @@ void ADFMediaPlayer::set_volume_(float volume, bool publish) {
 }
 
 void ADFMediaPlayer::on_pipeline_state_change(PipelineState state) {
-  esph_log_i(TAG, "got new pipeline state: %d", (int) state);
+  esph_log_i(TAG, "Got new pipeline state: %d", static_cast<int>(state));
   switch (state) {
     case PipelineState::UNINITIALIZED:
     case PipelineState::STOPPED:
       this->state = media_player::MEDIA_PLAYER_STATE_IDLE;
       publish_state();
-      if( this->play_intent_ )
-      {
+      if (this->play_intent_) {
         pipeline.start();
         this->play_intent_ = false;
       }
@@ -151,7 +151,7 @@ void ADFMediaPlayer::on_pipeline_state_change(PipelineState state) {
     case PipelineState::PREPARING:
     case PipelineState::STARTING:
     case PipelineState::RUNNING:
-      this->set_volume_( this->volume, false);
+      this->set_volume_(this->volume, false);
       this->state = media_player::MEDIA_PLAYER_STATE_PLAYING;
       publish_state();
       break;
