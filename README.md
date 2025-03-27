@@ -1,4 +1,4 @@
-# this is a copy from :  https://github.com/gnumpi/esphome_audio.git
+# this repo is a copy from :  https://github.com/gnumpi/esphome_audio  by gnumpi
 
 # ESPHome - Audio Components
 **Target Version: ESPHome-2023.12.9**
