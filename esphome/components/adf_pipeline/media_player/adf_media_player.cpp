@@ -1,53 +1,28 @@
 #include "adf_media_player.h"
 #include "esphome/core/log.h"
 
-#ifdef USE_ESP_IDF
-
 namespace esphome {
-namespace esp_adf {
+namespace adf_media_player {
 
-static const char *const TAG = "adf_media_player";
+static const char *TAG = "adf_media_player";
 
 void ADFMediaPlayer::setup() {
-  state = media_player::MEDIA_PLAYER_STATE_IDLE;
+  esph_log_i(TAG, "Setting up ADF Media Player");
+  pipeline.setup();
 }
 
-void ADFMediaPlayer::dump_config() {
-  esph_log_config(TAG, "ESP-ADF-MediaPlayer:");
-  int components = pipeline.get_number_of_elements();
-  esph_log_config(TAG, "  Number of ASPComponents: %d", components);
-}
-
-void ADFMediaPlayer::set_stream_uri(const std::string& new_uri) {
-  this->current_uri_ = new_uri;
-  http_and_decoder_.set_stream_uri(new_uri);
+void ADFMediaPlayer::loop() {
+  pipeline.loop();
 }
 
 void ADFMediaPlayer::control(const media_player::MediaPlayerCall &call) {
-  if (call.get_media_url().has_value()) {
-    set_stream_uri(call.get_media_url().value());
-    esph_log_d(TAG, "Got control call in state %d", state);
-    if (state == media_player::MEDIA_PLAYER_STATE_PLAYING || state == media_player::MEDIA_PLAYER_STATE_PAUSED) {
-      this->play_intent_ = true;
-      pipeline.stop();
-      return;
-    } else {
-      pipeline.start();
-    }
-  }
-
-  if (call.get_volume().has_value()) {
-    set_volume_(call.get_volume().value());
-    unmute_();
-  }
-
   if (call.get_command().has_value()) {
     switch (call.get_command().value()) {
       case media_player::MEDIA_PLAYER_COMMAND_PLAY:
         if (pipeline.getState() == PipelineState::STOPPED || pipeline.getState() == PipelineState::UNINITIALIZED) {
           pipeline.start();
         } else if (pipeline.getState() == PipelineState::PAUSED) {
-          pipeline.resume();
+          pipeline.restart();
         } else if (state == media_player::MEDIA_PLAYER_STATE_PLAYING || state == media_player::MEDIA_PLAYER_STATE_PAUSED) {
           this->play_intent_ = true;
           pipeline.stop();
@@ -59,7 +34,10 @@ void ADFMediaPlayer::control(const media_player::MediaPlayerCall &call) {
         }
         break;
       case media_player::MEDIA_PLAYER_COMMAND_STOP:
+        this->current_track_.reset();
+        this->current_uri_.reset();
         pipeline.stop();
+        this->http_and_decoder_.set_fixed_settings(false);
         break;
       case media_player::MEDIA_PLAYER_COMMAND_MUTE:
         this->mute_();
@@ -74,92 +52,48 @@ void ADFMediaPlayer::control(const media_player::MediaPlayerCall &call) {
           state = media_player::MEDIA_PLAYER_STATE_PAUSED;
         }
         break;
-      case media_player::MEDIA_PLAYER_COMMAND_VOLUME_UP:
-        set_volume_(std::min(this->volume + 0.1f, 1.0f));
-        unmute_();
+      case media_player::MEDIA_PLAYER_COMMAND_VOLUME_UP: {
+        float new_volume = this->volume + 0.1f;
+        if (new_volume > 1.0f)
+          new_volume = 1.0f;
+        set_volume_(new_volume);
         break;
-      case media_player::MEDIA_PLAYER_COMMAND_VOLUME_DOWN:
-        set_volume_(std::max(this->volume - 0.1f, 0.0f));
-        unmute_();
+      }
+      case media_player::MEDIA_PLAYER_COMMAND_VOLUME_DOWN: {
+        float new_volume = this->volume - 0.1f;
+        if (new_volume < 0.0f)
+          new_volume = 0.0f;
+        set_volume_(new_volume);
         break;
+      }
+      case media_player::MEDIA_PLAYER_COMMAND_ENQUEUE:
       case media_player::MEDIA_PLAYER_COMMAND_REPEAT_ONE:
-        esph_log_w(TAG, "Repeat one command received, not implemented.");
-        break;
       case media_player::MEDIA_PLAYER_COMMAND_REPEAT_OFF:
-        esph_log_w(TAG, "Repeat off command received, not implemented.");
-        break;
       case media_player::MEDIA_PLAYER_COMMAND_CLEAR_PLAYLIST:
-        esph_log_w(TAG, "Clear playlist command received, not implemented.");
+        esph_log_w(TAG, "Unhandled media player command: %d", call.get_command().value());
         break;
       default:
-        esph_log_w(TAG, "Unknown command received.");
+        esph_log_w(TAG, "Unknown media player command: %d", call.get_command().value());
         break;
     }
   }
 }
 
-media_player::MediaPlayerTraits ADFMediaPlayer::get_traits() {
-  auto traits = media_player::MediaPlayerTraits();
-  traits.set_supports_pause(false);
-  return traits;
-}
-
 void ADFMediaPlayer::mute_() {
-  AudioPipelineSettingsRequest request;
-  request.mute = 1;
-  if (pipeline.request_settings(request)) {
-    muted_ = true;
-    publish_state();
-  }
+  this->is_muted_ = true;
+  set_volume_(0.0f);
 }
 
 void ADFMediaPlayer::unmute_() {
-  AudioPipelineSettingsRequest request;
-  request.mute = 0;
-  if (pipeline.request_settings(request)) {
-    muted_ = false;
-    publish_state();
-  }
+  this->is_muted_ = false;
+  set_volume_(this->previous_volume_);
 }
 
-void ADFMediaPlayer::set_volume_(float volume, bool publish) {
-  AudioPipelineSettingsRequest request;
-  request.target_volume = volume;
-  if (pipeline.request_settings(request)) {
-    this->volume = volume;
-    if (publish)
-      publish_state();
-  }
+void ADFMediaPlayer::set_volume_(float volume) {
+  this->previous_volume_ = this->volume;
+  this->volume = volume;
+  esph_log_i(TAG, "Setting volume to %.2f", volume);
 }
 
-void ADFMediaPlayer::on_pipeline_state_change(PipelineState state) {
-  esph_log_i(TAG, "Got new pipeline state: %d", static_cast<int>(state));
-  switch (state) {
-    case PipelineState::UNINITIALIZED:
-    case PipelineState::STOPPED:
-      this->state = media_player::MEDIA_PLAYER_STATE_IDLE;
-      publish_state();
-      if (this->play_intent_) {
-        pipeline.start();
-        this->play_intent_ = false;
-      }
-      break;
-    case PipelineState::PAUSED:
-      this->state = media_player::MEDIA_PLAYER_STATE_PAUSED;
-      publish_state();
-      break;
-    case PipelineState::PREPARING:
-    case PipelineState::STARTING:
-    case PipelineState::RUNNING:
-      this->set_volume_(this->volume, false);
-      this->state = media_player::MEDIA_PLAYER_STATE_PLAYING;
-      publish_state();
-      break;
-    default:
-      break;
-  }
-}
-
-}  // namespace esp_adf
+}  // namespace adf_media_player
 }  // namespace esphome
-#endif
